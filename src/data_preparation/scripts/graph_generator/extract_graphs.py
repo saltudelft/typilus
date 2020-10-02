@@ -12,6 +12,7 @@ Options:
 import bdb
 from typing import Tuple, List, Optional, Set, Iterator
 from dpu_utils.utils import save_jsonl_gz, run_and_debug, ChunkWriter
+from dpu_utils.utils.dataloading import load_jsonl_gz
 import traceback
 import os
 import json
@@ -20,9 +21,9 @@ from glob import iglob
 from docopt import docopt
 import time
 
-from graphgenerator import AstGraphGenerator
-from type_lattice_generator import TypeLatticeGenerator
-from typeparsing import FaultyAnnotation
+from  .graphgenerator import AstGraphGenerator
+from .type_lattice_generator import TypeLatticeGenerator
+from .typeparsing import FaultyAnnotation
 
 
 class Monitoring:
@@ -97,12 +98,13 @@ def main(arguments):
         monitoring = Monitoring()
         type_lattice = TypeLatticeGenerator(arguments['TYPING_RULES'])
 
-        with open(arguments['DUPLICATES_JSON'], errors='ignore') as f:
-            duplicates = json.load(f)
-            all_to_remove = set()  # type: Set[str]
-            for duplicate_cluster in duplicates:
-                # Keep the first element, everything else should be ignored
-                all_to_remove.update(duplicate_cluster[1:])
+        #with open(arguments['DUPLICATES_JSON'], errors='ignore') as f:
+            #duplicates = json.load(f)
+        duplicates = load_jsonl_gz(arguments['DUPLICATES_JSON'])
+        all_to_remove = set()  # type: Set[str]
+        for duplicate_cluster in duplicates:
+            # Keep the first element, everything else should be ignored
+            all_to_remove.update(duplicate_cluster[1:])
 
         # Extract graphs
         outputs = explore_files(walk_dir, all_to_remove,
@@ -139,6 +141,9 @@ def main(arguments):
     print("\nExecution in: ", time.clock() - start_time, " seconds")
 
 
+def extract(src_dir:str, duplicate_json: str, save_dir:str, typing_rules:str):
+    main({'SOURCE_FOLDER': src_dir, 'DUPLICATES_JSON': duplicate_json,
+          'SAVE_FOLDER': save_dir, 'TYPING_RULES': typing_rules})
 
 
 if __name__ == '__main__':
