@@ -28,7 +28,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 
 class TypePredictionEvaluator:
-    def __init__(self, type_lattice_path: RichPath, alias_metadata_path: RichPath, bottom_symbol: str='typing.Any'):
+    def __init__(self, type_lattice_path: RichPath, alias_metadata_path: RichPath, bottom_symbol: str='typing.Any', top_n=10):
         self.__num_samples = 0
         self.__num_samples_on_lattice = 0
         self.__exact_match = 0
@@ -39,64 +39,75 @@ class TypePredictionEvaluator:
         self.__reciprocal_distance_sum = 0
         self.__sum_normalized_least_upper_bound_depth = 0
         self.__sum_reciprocal_least_upper_bound_depth = 0
+        self.__per_type_count = defaultdict(int)
         self.__per_type = defaultdict(lambda: defaultdict(int))
         self.__per_type_metrics = defaultdict(lambda: defaultdict(float))
+        self.top_n = top_n
 
         self.__type_lattice = TypeLattice(type_lattice_path, bottom_symbol, alias_metadata_path)
 
     def add_sample(self, ground_truth: str, predicted_dist: Dict[str, float]) -> None:
         self.__num_samples += 1
+        self.__per_type_count[ground_truth] += 1
 
-        predicted = max(predicted_dist, key=lambda x: predicted_dist[x])
+        #predicted = max(predicted_dist, key=lambda x: predicted_dist[x])s
+        predicted = sorted({t: s for t, s in predicted_dist.items()}.items(), key=lambda kv: kv[1],reverse=True)[:self.top_n]
 
-        # Exact Match
-        is_correct = self.__type_lattice.are_same_type(ground_truth, predicted)
+        found_correct_type = False
+        for t, s in predicted:
+            # Exact Match
+            is_correct = self.__type_lattice.are_same_type(ground_truth, t)
+            self.__exact_match += 1 if is_correct else 0
+            self.__per_type[ground_truth][t] += 1
 
-        self.__exact_match += 1 if is_correct else 0
-        self.__per_type[ground_truth][predicted] += 1
+            if is_correct:
+                # Avoid the hassle of computing the things below
+                self.__num_samples_on_lattice += 1
+                self.__per_type_metrics[ground_truth]["num_samples_on_lattice"] += 1
 
-        # Accurancy up to parametric type
-        is_accurate_utpt = self.__type_lattice.are_same_type(ground_truth.split("[")[0], predicted.split("[")[0])
-        self.__accuracy_up_to_parametric_type += 1 if is_accurate_utpt else 0
-        self.__per_type_metrics[ground_truth]["accuracy_up_to_parametric_type"] += 1 if is_accurate_utpt else 0
+                self.__type_consistency += 1
+                self.__type_consistency_without_any += 1
+                self.__per_type_metrics[ground_truth]["type_consistency"] += 1
+                self.__per_type_metrics[ground_truth]["type_consistency_without_any"] += 1
 
-        if is_correct:
-            # Avoid the hassle of computing the things below
-            self.__num_samples_on_lattice += 1
-            self.__per_type_metrics[ground_truth]["num_samples_on_lattice"] += 1
+                self.__reverse_type_consistency += 1
+                self.__per_type_metrics[ground_truth]["reverse_type_consistency"] += 1
 
-            self.__type_consistency += 1
-            self.__type_consistency_without_any += 1
-            self.__per_type_metrics[ground_truth]["type_consistency"] += 1
-            self.__per_type_metrics[ground_truth]["type_consistency_without_any"] += 1
+                self.__reciprocal_distance_sum += 1
+                self.__per_type_metrics[ground_truth]["reciprocal_distance"] += 1
 
-            self.__reverse_type_consistency += 1
-            self.__per_type_metrics[ground_truth]["reverse_type_consistency"] += 1
+                self.__sum_normalized_least_upper_bound_depth += 1
+                self.__per_type_metrics[ground_truth]["sum_normalized_least_upper_bound_depth"] +=  1
 
-            self.__reciprocal_distance_sum += 1
-            self.__per_type_metrics[ground_truth]["reciprocal_distance"] += 1
+                if ground_truth in self.__type_lattice:
+                    ground_truth_node_idx = self.__type_lattice.id_of(ground_truth)
+                    depth = self.__type_lattice.get_depth(ground_truth_node_idx)
+                    self.__sum_reciprocal_least_upper_bound_depth += (1./ depth) if depth > 0 else 0
+                    self.__per_type_metrics[ground_truth]["sum_reciprocal_least_upper_bound_depth"] += (1./ depth) if depth > 0 else 0
+                
+                found_correct_type = True
+                break
 
-            self.__sum_normalized_least_upper_bound_depth += 1
-            self.__per_type_metrics[ground_truth]["sum_normalized_least_upper_bound_depth"] +=  1
+        for t, s in predicted:
+            is_accurate_utpt = self.__type_lattice.are_same_type(ground_truth.split("[")[0], t.split("[")[0])
+            self.__accuracy_up_to_parametric_type += 1 if is_accurate_utpt else 0
+            self.__per_type_metrics[ground_truth]["accuracy_up_to_parametric_type"] += 1 if is_accurate_utpt else 0
 
-            if ground_truth in self.__type_lattice:
-                ground_truth_node_idx = self.__type_lattice.id_of(ground_truth)
-                depth = self.__type_lattice.get_depth(ground_truth_node_idx)
-                self.__sum_reciprocal_least_upper_bound_depth += (1./ depth) if depth > 0 else 0
-                self.__per_type_metrics[ground_truth]["sum_reciprocal_least_upper_bound_depth"] += (1./ depth) if depth > 0 else 0
+            if is_accurate_utpt:
+                break
 
-        elif self.__type_lattice is not None and ground_truth in self.__type_lattice and predicted in self.__type_lattice:
+        if not found_correct_type and self.__type_lattice is not None and ground_truth in self.__type_lattice and predicted[0][0] in self.__type_lattice:
             self.__num_samples_on_lattice += 1
             self.__per_type_metrics[ground_truth]["num_samples_on_lattice"] += 1
 
             # Type Consistency and Directed Distance
             ground_truth_node_idx = self.__type_lattice.id_of(ground_truth)
-            predicted_node_idx = self.__type_lattice.id_of(predicted)
+            predicted_node_idx = self.__type_lattice.id_of(predicted[0][0])
 
             intersection_nodes_idx = self.__type_lattice.intersect(ground_truth_node_idx, predicted_node_idx)
             is_ground_subtype_of_predicted = ground_truth_node_idx in intersection_nodes_idx
 
-            predicted_is_any = self.__type_lattice.are_same_type(predicted, 'typing.Any')
+            predicted_is_any = self.__type_lattice.are_same_type(predicted[0][0], 'typing.Any')
             self.__type_consistency += 1 if is_ground_subtype_of_predicted else 0
             self.__per_type_metrics[ground_truth]["type_consistency"] += 1 if is_ground_subtype_of_predicted else 0
 
@@ -132,7 +143,6 @@ class TypePredictionEvaluator:
             self.__reciprocal_distance_sum += 1 / (distance + 1.)
             self.__per_type_metrics[ground_truth]["reciprocal_distance"] += 1 / (distance + 1.)
 
-
     def metrics(self) -> Dict[str, Any]:
         metrics = {
             'accuracy': self.__exact_match / self.__num_samples,
@@ -153,14 +163,14 @@ class TypePredictionEvaluator:
 
         per_type_stats = {}
         for type_annot, classifications in self.__per_type.items():
-            num_samples = sum(classifications.values())
+            #num_samples = sum(classifications.values())
             num_samples_on_lattice = self.__per_type_metrics[type_annot]["num_samples_on_lattice"]
 
             per_type_stats[type_annot] = {
-                'accuracy': classifications[type_annot] / num_samples,
-                'accuracy_up_to_parametric_type': self.__per_type_metrics[type_annot]['accuracy_up_to_parametric_type'] / num_samples,
-                'confusions': {c: classifications[c] / num_samples for c in classifications if c != type_annot},
-                'count': num_samples
+                'accuracy': classifications[type_annot] / self.__per_type_count[type_annot],
+                'accuracy_up_to_parametric_type': self.__per_type_metrics[type_annot]['accuracy_up_to_parametric_type'] / self.__per_type_count[type_annot],
+                'confusions': {c: classifications[c] / self.__per_type_count[type_annot] for c in classifications if c != type_annot},
+                'count': self.__per_type_count[type_annot]
             }
 
             if self.__type_lattice is not None:
@@ -177,7 +187,8 @@ class TypePredictionEvaluator:
         return metrics
 
 
-def run_test(model_path: RichPath, test_data_path: RichPath, type_lattice_path: RichPath, alias_metadata_path: RichPath, print_predictions: bool = False):
+def run_test(model_path: RichPath, test_data_path: RichPath, type_lattice_path: RichPath, alias_metadata_path: RichPath,
+             result_path: str, top_n=10, print_predictions: bool = False):
     test_run_id = "_".join(
         [time.strftime("%Y-%m-%d-%H-%M-%S"), str(os.getpid())])
 
@@ -192,10 +203,10 @@ def run_test(model_path: RichPath, test_data_path: RichPath, type_lattice_path: 
     model = model_restore_helper.restore(
         model_path, is_train=False, hyper_overrides=test_hyper_overrides)
 
-    evaluator = TypePredictionEvaluator(type_lattice_path, alias_metadata_path)
+    evaluator = TypePredictionEvaluator(type_lattice_path, alias_metadata_path, top_n=top_n)
 
     all_annotations = model.annotate(test_data_chunks)
-    for annotation in all_annotations:
+    for i, annotation in enumerate(all_annotations):
         if ignore_type_annotation(annotation.original_annotation):
             continue
         predicted_annotation = max(annotation.predicted_annotation_logprob_dist,
@@ -205,8 +216,11 @@ def run_test(model_path: RichPath, test_data_path: RichPath, type_lattice_path: 
                 f'{annotation.provenance} -- {annotation.name}: {annotation.original_annotation} -> {predicted_annotation} ({math.exp(annotation.predicted_annotation_logprob_dist[predicted_annotation])*100:.1f}%)')
         evaluator.add_sample(ground_truth=annotation.original_annotation,
                              predicted_dist=annotation.predicted_annotation_logprob_dist)
+        
+        # if i > 1500: break
 
-    print(json.dumps(evaluator.metrics(), indent=2, sort_keys=True))
+    with open(result_path, 'w') as f:
+        f.write(json.dumps(evaluator.metrics(), indent=2, sort_keys=True))
 
 
 def run(arguments):
