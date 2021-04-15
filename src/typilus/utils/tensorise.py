@@ -29,6 +29,46 @@ from typilus.model.model_restore_helper import get_model_class_from_name
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+def create(model_class, output_folder_path, input_folder_path, metadata_file=None, for_test=False):
+
+    output_folder = RichPath.create(output_folder_path)
+    input_folders, input_folder_basenames = [], set()
+    for input_folder_name in input_folder_path:
+        input_folder_basename = os.path.basename(input_folder_name)
+        if input_folder_basename in input_folder_basenames:
+            raise ValueError("Several input folders with same basename '%s'!" % (
+                input_folder_basename,))
+        input_folder_basenames.add(input_folder_basename)
+        input_folder = RichPath.create(input_folder_name)
+        assert input_folder.is_dir(), "%s is not a folder" % (input_folder,)
+        input_folders.append(input_folder)
+
+    model_class = get_model_class_from_name(model_class)
+    hyperparameters = model_class.get_default_hyperparameters()
+
+    # hypers_override = arguments.get('--hypers-override')
+    # if hypers_override is not None:
+    #     hyperparameters.update(json.loads(hypers_override))
+
+    model = model_class(hyperparameters)
+
+    if metadata_file is None:
+        train_folder = input_folders[0]
+        model.load_metadata(train_folder, max_num_files=100000)
+    else:
+        metadata_path = RichPath.create(metadata_file)
+        model.load_existing_metadata(metadata_path)
+
+    model.make_model(is_train=not for_test)
+
+    for input_folder in input_folders:
+        this_output_folder = output_folder
+        this_output_folder.make_as_dir()
+        model.tensorise_data_in_dir(input_folder,
+                                    this_output_folder,
+                                    for_test=for_test,
+                                    max_num_files=100000)
+
 
 def run(arguments):
     azure_info_path = arguments.get('--azure-info', None)

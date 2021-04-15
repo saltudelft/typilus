@@ -19,6 +19,22 @@ from typilus.model import model_restore_helper
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+def start(model_path: RichPath, index_data_train: RichPath, index_data_valid: RichPath):
+    test_hyper_overrides = {
+        'run_id': 'indexing',
+        "dropout_keep_rate": 1.0,
+    }
+
+    train_data_chunks = index_data_train.get_filtered_files_in_dir('*.jsonl.gz')
+    valid_data_chunks = index_data_valid.get_filtered_files_in_dir('*.jsonl.gz')
+
+    # Restore model
+    model = model_restore_helper.restore(
+        model_path, is_train=False, hyper_overrides=test_hyper_overrides)
+
+    model.create_index(train_data_chunks + valid_data_chunks)
+    model.save(model_path)
+
 
 def run_indexing(model_path: RichPath, index_data_path: RichPath):
     test_hyper_overrides = {

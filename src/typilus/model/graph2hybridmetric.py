@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Tuple, Optional
 
+import time
 import numpy as np
 import tensorflow as tf
 from dpu_utils.utils import RichPath
@@ -140,4 +141,9 @@ class Graph2HybridMetric(CodeGraphModel):
                 None)
 
     def annotate_single(self, raw_sample: Dict[str, Any], loaded_test_sample: Dict[str, Any], provenance: str):
-        return self.__type_metric.annotate_single(raw_sample, loaded_test_sample, provenance, self.metadata)
+        s_t = time.time()
+        a = self.__type_metric.annotate_single(raw_sample, loaded_test_sample, provenance, self.metadata)
+        print("single prediction in %f sec." % (time.time() - s_t))
+        return a
+        
+         

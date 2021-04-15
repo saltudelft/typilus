@@ -49,7 +49,7 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
     for prediction in data:
         annotation_type = prediction['annotation_type']
         original_annotation = prediction['original_annotation']
-        if ignore_type_annotation(original_annotation) or annotation_type == 'variable':
+        if ignore_type_annotation(original_annotation) or annotation_type == 'variable' or annotation_type == 'imported':
             continue
         
         true_annotation.append(original_annotation)

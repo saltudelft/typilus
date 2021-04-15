@@ -454,6 +454,15 @@ class Model(ABC):
             cur_chunk_idx = (cur_chunk_idx + 1) % len(open_chunks_info)
             cur_chunk_info = open_chunks_info[cur_chunk_idx]
 
+            # Debugging chunks
+            #print("idx: %d | chunk sample size: %d" % (cur_chunk_idx, len(cur_chunk_info.sample_idx_list)))
+
+            # Skip empty chunks
+            if len(cur_chunk_info.sample_idx_list) == 0:
+                #print("Skip empty chunk...")
+                del(open_chunks_info[cur_chunk_idx])
+                continue
+
             # Get next sample:
             cur_sample = cur_chunk_info.data[cur_chunk_info.sample_idx_list[cur_chunk_info.samples_used_so_far[0]]]
             cur_batch_data['samples_in_batch'] += 1
@@ -484,6 +493,7 @@ class Model(ABC):
             for (idx, (raw_batch, samples_in_batch, samples_used_so_far)) in enumerate(raw_batch_iterator):
                 minibatch = self._finalise_minibatch(raw_batch, is_train)
                 minibatch[self.__placeholders['batch_size']] = samples_in_batch
+                print(samples_in_batch)
                 yield (minibatch, samples_in_batch, samples_used_so_far)
         else:
             batch_data = {}

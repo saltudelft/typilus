@@ -78,6 +78,21 @@ def make_run_id(arguments: Dict[str, Any]) -> str:
         return "%s-%s" % (user_save_name, time.strftime("%Y-%m-%d-%H-%M-%S"))
 
 
+def start(train_data_path, valid_folder_path, save_folder_path, model_class):
+
+    train_folder = RichPath.create(train_data_path)
+    valid_folder = RichPath.create(valid_folder_path)
+    os.makedirs(save_folder_path, exist_ok=True)
+
+    assert train_folder.is_dir(), "%s is not a folder" % (train_folder,)
+    assert valid_folder.is_dir(), "%s is not a folder" % (valid_folder,)
+
+    model_class = get_model_class_from_name(model_class)
+    hyperparameters = model_class.get_default_hyperparameters()
+    hyperparameters['run_id'] = "%s-%s" % (model_class.__class__.__name__, time.strftime("%Y-%m-%d-%H-%M-%S"))
+
+    return run_train(model_class, train_folder, valid_folder, save_folder_path, hyperparameters)
+
 def run(arguments, tag_in_vcs=False) -> RichPath:
     azure_info_path = arguments.get('--azure-info', None)
     train_folder = RichPath.create(

@@ -18,7 +18,7 @@ from collections import defaultdict
 from typing import Dict, Any, Optional
 
 from docopt import docopt
-from dpu_utils.utils import RichPath, run_and_debug
+from dpu_utils.utils import RichPath, run_and_debug, load_jsonl_gz
 
 from typilus.model import model_restore_helper
 from typilus.model.typelattice import TypeLattice
@@ -51,7 +51,7 @@ class TypePredictionEvaluator:
         self.__per_type_count[ground_truth] += 1
 
         #predicted = max(predicted_dist, key=lambda x: predicted_dist[x])s
-        predicted = sorted({t: s for t, s in predicted_dist.items()}.items(), key=lambda kv: kv[1],reverse=True)[:self.top_n]
+        predicted = sorted({t: s for t, s in predicted_dist}.items(), key=lambda kv: kv[1],reverse=True)[:self.top_n]
 
         found_correct_type = False
         for t, s in predicted:
@@ -187,35 +187,36 @@ class TypePredictionEvaluator:
         return metrics
 
 
-def run_test(model_path: RichPath, test_data_path: RichPath, type_lattice_path: RichPath, alias_metadata_path: RichPath,
+def run_test(preds_path: RichPath, type_lattice_path: RichPath, alias_metadata_path: RichPath,
              result_path: str, top_n=10, print_predictions: bool = False):
-    test_run_id = "_".join(
-        [time.strftime("%Y-%m-%d-%H-%M-%S"), str(os.getpid())])
+    # test_run_id = "_".join(
+    #     [time.strftime("%Y-%m-%d-%H-%M-%S"), str(os.getpid())])
 
-    test_hyper_overrides = {
-        'run_id': test_run_id,
-        "dropout_keep_rate": 1.0,
-    }
+    # test_hyper_overrides = {
+    #     'run_id': test_run_id,
+    #     "dropout_keep_rate": 1.0,
+    # }
 
-    test_data_chunks = test_data_path.get_filtered_files_in_dir('*gz')
+    #test_data_chunks = test_data_path.get_filtered_files_in_dir('*gz')
 
     # Restore model
-    model = model_restore_helper.restore(
-        model_path, is_train=False, hyper_overrides=test_hyper_overrides)
+    # model = model_restore_helper.restore(
+    #     model_path, is_train=False, hyper_overrides=test_hyper_overrides)
+    # all_annotations = model.annotate(test_data_chunks)
 
     evaluator = TypePredictionEvaluator(type_lattice_path, alias_metadata_path, top_n=top_n)
-
-    all_annotations = model.annotate(test_data_chunks)
-    for i, annotation in enumerate(all_annotations):
-        if ignore_type_annotation(annotation.original_annotation):
+    
+    for i, annotation in enumerate(load_jsonl_gz(preds_path)):
+        if ignore_type_annotation(annotation['original_annotation']):
             continue
-        predicted_annotation = max(annotation.predicted_annotation_logprob_dist,
-                                   key=lambda x: annotation.predicted_annotation_logprob_dist[x])
+        
         if print_predictions:
+            predicted_annotation = max(annotation['predicted_annotation_logprob_dist'],
+                                   key=lambda x: annotation['predicted_annotation_logprob_dist'][x])
             print(
                 f'{annotation.provenance} -- {annotation.name}: {annotation.original_annotation} -> {predicted_annotation} ({math.exp(annotation.predicted_annotation_logprob_dist[predicted_annotation])*100:.1f}%)')
-        evaluator.add_sample(ground_truth=annotation.original_annotation,
-                             predicted_dist=annotation.predicted_annotation_logprob_dist)
+        evaluator.add_sample(ground_truth=annotation['original_annotation'],
+                             predicted_dist=annotation['predicted_annotation_logprob_dist'])
         
         # if i > 1500: break
 
