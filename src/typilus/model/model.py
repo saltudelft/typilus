@@ -454,13 +454,9 @@ class Model(ABC):
             cur_chunk_idx = (cur_chunk_idx + 1) % len(open_chunks_info)
             cur_chunk_info = open_chunks_info[cur_chunk_idx]
 
-            # Debugging chunks
-            #print("idx: %d | chunk sample size: %d" % (cur_chunk_idx, len(cur_chunk_info.sample_idx_list)))
-
             # Skip empty chunks
             if len(cur_chunk_info.sample_idx_list) == 0:
-                #print("Skip empty chunk...")
-                del(open_chunks_info[cur_chunk_idx])
+                del (open_chunks_info[cur_chunk_idx])
                 continue
 
             # Get next sample:
