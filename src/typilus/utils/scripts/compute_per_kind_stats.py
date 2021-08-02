@@ -17,7 +17,9 @@ from sklearn.metrics import classification_report
 
 from typilus.model.typelattice import TypeLattice
 from typilus.model.utils import ignore_type_annotation
+from tqdm import tqdm
 import json
+import numpy as np
 
 def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metadata_path: RichPath,
             json_preds: str, top_n: int = 10):
@@ -34,6 +36,8 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
     # type_consistency_per_kind = defaultdict(int)
     # total_per_kind_for_consistency = defaultdict(int)
 
+    ubiq_t = {'str', 'int', 'list', 'bool', 'float', 'typing.Text', 'typing.List', 'typing.List[typing.Any]', 'typing.list'}
+
     common_tr = 100
     corr_exact_per_kind = defaultdict(lambda: defaultdict(int))
     corr_param_per_kind = defaultdict(lambda: defaultdict(int))
@@ -46,10 +50,13 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
     pred_per_type = defaultdict(list)
     true_per_type = defaultdict(list)
 
+    mrr_all = []
+    mrr_per_kind = defaultdict(list)
+
     for prediction in data:
         annotation_type = prediction['annotation_type']
         original_annotation = prediction['original_annotation']
-        if ignore_type_annotation(original_annotation) or annotation_type == 'variable' or annotation_type == 'imported':
+        if ignore_type_annotation(original_annotation) or annotation_type == 'imported':
             continue
         
         true_annotation.append(original_annotation)
@@ -60,12 +67,19 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
         is_exact_match = False
         is_accurate_utpt = False
 
-        for t, s in prediction['predicted_annotation_logprob_dist'][:top_n]:
+        for i, (t, s) in enumerate(prediction['predicted_annotation_logprob_dist'][:top_n]):
             is_exact_match = type_lattice.are_same_type(original_annotation, t)
             if is_exact_match:
                 correct_per_kind[annotation_type] += 1
                 corr_exact['all'] += 1
-                if json_data[original_annotation]['count'] > common_tr:
+                mrr_all.append(1/(i+1))
+                mrr_per_kind[annotation_type].append(1/(i+1))
+                if original_annotation in ubiq_t:
+                    #print(original_annotation)
+                    corr_exact_per_kind[annotation_type]['corr_ubiq'] += 1
+                    corr_exact['corr_ubiq'] += 1
+                elif json_data[original_annotation]['count'] >= common_tr:
+                    #print("C", original_annotation)
                     corr_exact_per_kind[annotation_type]['corr_common'] += 1
                     corr_exact['corr_common'] += 1
                 else:
@@ -81,7 +95,10 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
             if is_accurate_utpt:
                 up_to_parameteric_per_kind[annotation_type] += 1
                 corr_param['all'] += 1
-                if json_data[original_annotation]['count'] > common_tr:
+                if original_annotation in ubiq_t:
+                    corr_param_per_kind[annotation_type]['corr_ubiq'] += 1
+                    corr_param['corr_ubiq'] += 1
+                elif json_data[original_annotation]['count'] >= common_tr:
                     corr_param_per_kind[annotation_type]['corr_common'] += 1
                     corr_param['corr_common'] += 1
                 else:
@@ -90,7 +107,12 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
                 break
 
         if not is_exact_match:
-            if json_data[original_annotation]['count'] > common_tr:
+            mrr_all.append(0)
+            mrr_per_kind[annotation_type].append(0)
+            if original_annotation in ubiq_t:
+                corr_exact_per_kind[annotation_type]['incorr_ubiq'] += 1
+                corr_exact['incorr_ubiq'] += 1
+            elif json_data[original_annotation]['count'] >= common_tr:
                 corr_exact_per_kind[annotation_type]['incorr_common'] += 1
                 corr_exact['incorr_common'] += 1
             else:
@@ -100,7 +122,10 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
             pred_per_type[annotation_type].append(prediction['predicted_annotation_logprob_dist'][0][0])
 
         if not is_accurate_utpt:
-            if json_data[original_annotation]['count'] > common_tr:
+            if original_annotation in ubiq_t:
+                corr_param_per_kind[annotation_type]['incorr_ubiq'] += 1
+                corr_param['incorr_ubiq'] += 1
+            if json_data[original_annotation]['count'] >= common_tr:
                 corr_param_per_kind[annotation_type]['incorr_common'] += 1
                 corr_param['incorr_common'] += 1
             else:
@@ -124,10 +149,12 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
     for annot_type in total_per_kind:
         try:
             print(f'{annot_type}: {correct_per_kind[annot_type] / total_per_kind[annot_type] * 100.0 :.2f} ({correct_per_kind[annot_type]}/{total_per_kind[annot_type]})')
+            print(f"Ubiq - {annot_type}: {corr_exact_per_kind[annot_type]['corr_ubiq'] / (corr_exact_per_kind[annot_type]['corr_ubiq'] + corr_exact_per_kind[annot_type]['incorr_ubiq']) * 100.0 :.2f}")
             print(f"Common - {annot_type}: {corr_exact_per_kind[annot_type]['corr_common'] / (corr_exact_per_kind[annot_type]['corr_common'] + corr_exact_per_kind[annot_type]['incorr_common']) * 100.0 :.2f}")
             print(f"Rare - {annot_type}: {corr_exact_per_kind[annot_type]['corr_rare'] / (corr_exact_per_kind[annot_type]['corr_rare'] + corr_exact_per_kind[annot_type]['incorr_rare']) * 100.0 :.2f}")
-            r = classification_report(true_per_type[annot_type], pred_per_type[annot_type], output_dict=True)
-            print(f"{annot_type}: F1: {r['weighted avg']['f1-score'] * 100:.2f} R: {r['weighted avg']['recall'] * 100:.2f} P: {r['weighted avg']['precision'] * 100:.2f}")
+            print(f"MRR - {annot_type}: {np.mean(mrr_per_kind[annot_type])*100:.2f}")
+            #r = classification_report(true_per_type[annot_type], pred_per_type[annot_type], output_dict=True)
+            #print(f"{annot_type}: F1: {r['weighted avg']['f1-score'] * 100:.2f} R: {r['weighted avg']['recall'] * 100:.2f} P: {r['weighted avg']['precision'] * 100:.2f}")
             print("******************************")
         except ZeroDivisionError:
             pass
@@ -141,14 +168,16 @@ def compute(predictions_path: RichPath, type_lattice_path: RichPath, alias_metad
         except ZeroDivisionError:
             pass
 
-    r = classification_report(true_annotation, pred_annotation, output_dict=True)
-    print("Precision: %.2f" % (r['weighted avg']['precision'] * 100))
-    print("Recall: %.2f" % (r['weighted avg']['recall'] * 100))
-    print("F1-score: %.2f" % (r['weighted avg']['f1-score'] * 100))
+    # r = classification_report(true_annotation, pred_annotation, output_dict=True)
+    # print("Precision: %.2f" % (r['weighted avg']['precision'] * 100))
+    # print("Recall: %.2f" % (r['weighted avg']['recall'] * 100))
+    # print("F1-score: %.2f" % (r['weighted avg']['f1-score'] * 100))
     print("******************************")
-    print(f"Exact - All: {corr_exact['all']/len(true_annotation)*100.0:.2f} common: {corr_exact['corr_common'] / (corr_exact['corr_common'] + corr_exact['incorr_common'])*100.0:.2f} rare: {corr_exact['corr_rare'] / (corr_exact['corr_rare'] + corr_exact['incorr_rare'])*100.0:.2f}")
+    print(f"Exact - All: {corr_exact['all']/len(true_annotation)*100.0:.2f} ubiq: {corr_exact['corr_ubiq'] / (corr_exact['corr_ubiq'] + corr_exact['incorr_ubiq'])*100.0:.2f} common: {corr_exact['corr_common'] / (corr_exact['corr_common'] + corr_exact['incorr_common'])*100.0:.2f} rare: {corr_exact['corr_rare'] / (corr_exact['corr_rare'] + corr_exact['incorr_rare'])*100.0:.2f}")
     print(f"Parameteric - All: {corr_param['all']/len(true_annotation)*100.0:.2f} common: {corr_param['corr_common'] / (corr_param['corr_common'] + corr_param['incorr_common'])*100.0:.2f} rare: {corr_param['corr_rare'] / (corr_param['corr_rare'] + corr_param['incorr_rare'])*100.0:.2f}")
+    print(f"MRR: {np.mean(mrr_all)*100:.2f}")
 
+    return np.mean(mrr_all)*100
     # print('== Consistency')
     # for annot_type in total_per_kind:
     #     print(f'{annot_type}: {type_consistency_per_kind[annot_type] / total_per_kind_for_consistency[annot_type] :%} ({type_consistency_per_kind[annot_type]}/{total_per_kind_for_consistency[annot_type]})')
