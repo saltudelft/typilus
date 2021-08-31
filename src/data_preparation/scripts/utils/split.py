@@ -30,13 +30,14 @@ def split_graphs(data_dir, out_dir, train_ratio=0.7, valid_ratio=0.1):
         ChunkWriter(os.path.join(out_dir, 'test'), file_prefix='graph-', max_chunk_size=1000, file_suffix='.jsonl.gz') as test_w:
         for f in tqdm(iglob(os.path.join(data_dir, "*.jsonl.gz"))):
             for ex in load_jsonl_gz(f):
-                partition = get_fold(
-                    ex["filename"], train_ratio, valid_ratio
-                )
-                if partition == "train":
+                # partition = get_fold(
+                #     ex["filename"], train_ratio, valid_ratio
+                # )
+                # Sets are embedded in graphs, i.e., ex['set']
+                if ex['set'] == "train":
                     train_w.add(ex)
                     num_train += 1
-                elif partition == "valid":
+                elif ex['set'] == "valid":
                     valid_w.add(ex)
                     num_valid += 1
                 else:

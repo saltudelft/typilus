@@ -10,7 +10,7 @@ Options:
     --debug                Debugging mode.
 """
 import bdb
-from typing import Tuple, List, Optional, Set, Iterator
+from typing import Tuple, List, Optional, Set, Iterator, Dict
 from dpu_utils.utils import save_jsonl_gz, run_and_debug, ChunkWriter
 from dpu_utils.utils.dataloading import load_jsonl_gz
 import traceback
@@ -19,7 +19,9 @@ import json
 from glob import iglob
 
 from docopt import docopt
+from pathlib import Path
 import time
+import csv
 
 from  .graphgenerator import AstGraphGenerator
 from .type_lattice_generator import TypeLatticeGenerator
@@ -65,7 +67,8 @@ def build_graph(source_code, monitoring: Monitoring, type_lattice: TypeLatticeGe
 
 
 
-def explore_files(root_dir: str, duplicates_to_remove: Set[str], monitoring: Monitoring, type_lattice: TypeLatticeGenerator) -> Iterator[Tuple]:
+def explore_files(root_dir: str, duplicates_to_remove: Set[str], monitoring: Monitoring,
+                  type_lattice: TypeLatticeGenerator, file_sets: dict) -> Iterator[Tuple]:
     """
     Walks through the root_dir and process each file.
     """
@@ -73,7 +76,7 @@ def explore_files(root_dir: str, duplicates_to_remove: Set[str], monitoring: Mon
         if file_path in duplicates_to_remove:
             print('Ignoring duplicate %s' % file_path)
             continue
-        print(file_path)
+
         if not os.path.isfile(file_path):
             continue
         with open(file_path, encoding="utf-8", errors='ignore') as f:
@@ -87,6 +90,8 @@ def explore_files(root_dir: str, duplicates_to_remove: Set[str], monitoring: Mon
             if graph is None or len(graph['supernodes']) == 0:
                 continue
             graph['filename'] = file_path[len(root_dir):]
+            # Add file set here, i.e., train, test,...
+            graph['set'] = file_sets[file_path]
             yield graph
 
 
@@ -95,6 +100,14 @@ def main(arguments):
         start_time = time.clock()
         print("Exploring folders ...")
         walk_dir = arguments['SOURCE_FOLDER']
+
+        file_sets = {}
+        # File sets, train, test, valid
+        with open(arguments['SETS_SPLIT']) as csv_f:
+            csv_r = csv.reader(csv_f, delimiter = ',')
+            for s, f_path in csv_r:
+                file_sets[os.path.join(Path(walk_dir).parent, f_path)] = s
+
         monitoring = Monitoring()
         type_lattice = TypeLatticeGenerator(arguments['TYPING_RULES'])
 
@@ -108,7 +121,8 @@ def main(arguments):
 
         # Extract graphs
         outputs = explore_files(walk_dir, all_to_remove,
-                                monitoring, type_lattice)
+                                monitoring, type_lattice,
+                                file_sets)
 
         # Save results
         with ChunkWriter(out_folder=arguments['SAVE_FOLDER'], file_prefix='all-graphs',
@@ -119,6 +133,7 @@ def main(arguments):
         return
     except Exception as e:
         print("e: ", e)
+        traceback.print_exc()
         print(monitoring.current_repo)
         print(monitoring.file)
 
@@ -141,9 +156,11 @@ def main(arguments):
     print("\nExecution in: ", time.clock() - start_time, " seconds")
 
 
-def extract(src_dir:str, duplicate_json: str, save_dir:str, typing_rules:str):
+def extract(src_dir:str, duplicate_json: str, save_dir:str, typing_rules:str, 
+            sets_split_path: str):
     main({'SOURCE_FOLDER': src_dir, 'DUPLICATES_JSON': duplicate_json,
-          'SAVE_FOLDER': save_dir, 'TYPING_RULES': typing_rules})
+          'SAVE_FOLDER': save_dir, 'TYPING_RULES': typing_rules,
+          'SETS_SPLIT': sets_split_path})
 
 
 if __name__ == '__main__':
